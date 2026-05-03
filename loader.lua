@@ -8,7 +8,7 @@ local StarterGui        = game:GetService("StarterGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local BASE     = "https://raw.githubusercontent.com/Shookenblook/Val-Privss/main/"
-local ASSET_ID = 78145948946458
+local ASSET_ID = 102617310867201
 
 -- Fetch and run a server script from GitHub
 local function runServer(file)
