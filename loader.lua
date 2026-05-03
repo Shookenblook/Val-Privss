@@ -1,5 +1,5 @@
 -- ============================================================
--- Blueblurhub Loader
+-- Blueblurhub Loader — Force GUI Load
 -- Shookenblook/Val-Privss
 -- ============================================================
 
@@ -7,45 +7,27 @@ local HttpService   = game:GetService("HttpService")
 local InsertService = game:GetService("InsertService")
 local Players       = game:GetService("Players")
 local StarterGui    = game:GetService("StarterGui")
+local SS            = game:GetService("ServerScriptService")
+local RS            = game:GetService("ReplicatedStorage")
 
 local GUI_ASSET_ID = 78145948946458
 local RAW_BASE     = "https://raw.githubusercontent.com/Shookenblook/Val-Privss/main/"
 
 -- ============================================================
--- FETCH WITH BETTER ERROR HANDLING
+-- FETCH
 -- ============================================================
 
 local function fetch(filename)
     local url = RAW_BASE .. filename
     print("[Loader] Fetching: " .. url)
-    
-    -- Check HTTP is enabled first
-    if not HttpService.HttpEnabled then
-        warn("[Loader] HTTP is DISABLED! Go to Game Settings → Security → Allow HTTP Requests")
-        return nil
-    end
-    
     local ok, result = pcall(function()
         return HttpService:GetAsync(url, true)
     end)
-    
-    if not ok then
-        warn("[Loader] GetAsync failed: " .. tostring(result))
+    if not ok or type(result) ~= "string" or #result == 0 then
+        warn("[Loader] Failed to fetch: " .. filename .. " | " .. tostring(result))
         return nil
     end
-    
-    if type(result) ~= "string" then
-        warn("[Loader] Got nil/non-string response for: " .. filename)
-        warn("[Loader] Check the file exists at: " .. url)
-        return nil
-    end
-    
-    if #result == 0 then
-        warn("[Loader] Empty response for: " .. filename)
-        return nil
-    end
-    
-    print("[Loader] Fetched " .. filename .. " (" .. #result .. " bytes)")
+    print("[Loader] Got " .. #result .. " bytes: " .. filename)
     return result
 end
 
@@ -54,122 +36,122 @@ end
 -- ============================================================
 
 local function loadBridge()
-    print("[Loader] Loading bridge...")
     local code = fetch("bridge.lua")
-    if not code then
-        warn("[Loader] Could not fetch bridge.lua")
-        warn("[Loader] Make sure bridge.lua exists in your repo at:")
-        warn("[Loader] " .. RAW_BASE .. "bridge.lua")
-        return false
-    end
-    
-    local fn, compileErr = loadstring(code)
+    if not code then return false end
+    local fn, err = loadstring(code)
     if not fn then
-        warn("[Loader] bridge.lua compile error: " .. tostring(compileErr))
+        warn("[Loader] Bridge compile error: " .. tostring(err))
         return false
     end
-    
-    local ok, runtimeErr = pcall(fn)
+    local ok, err2 = pcall(fn)
     if not ok then
-        warn("[Loader] bridge.lua runtime error: " .. tostring(runtimeErr))
+        warn("[Loader] Bridge runtime error: " .. tostring(err2))
         return false
     end
-    
-    print("[Loader] Bridge loaded OK")
+    print("[Loader] Bridge OK")
     return true
 end
 
 -- ============================================================
--- LOAD GUI
+-- FORCE GIVE GUI TO ONE PLAYER
+-- Injects a LocalScript into their PlayerGui that
+-- downloads and builds the GUI entirely on the client
 -- ============================================================
 
-local function loadGui()
-    print("[Loader] Loading GUI asset " .. GUI_ASSET_ID .. "...")
-    
-    local ok, result = pcall(function()
+local function forceGiveGui(player)
+    -- This LocalScript runs on the client and force-loads the GUI
+    local injector = Instance.new("LocalScript")
+    injector.Name = "BlueblurhubLoader"
+
+    -- We build the LocalScript source as a string
+    -- It will HttpGet the GUI lua file and run it on the client
+    injector.Source = [[
+        local HttpService = game:GetService("HttpService")
+        local Players     = game:GetService("Players")
+        local LP          = Players.LocalPlayer
+
+        -- Wait for PlayerGui
+        local PlayerGui = LP:WaitForChild("PlayerGui")
+
+        -- Remove old instance if exists
+        local old = PlayerGui:FindFirstChild("Blueblurhub")
+        if old then old:Destroy() end
+
+        -- Force load the GUI script from GitHub
+        local url = "https://raw.githubusercontent.com/Shookenblook/Val-Privss/main/gui.lua"
+        local ok, code = pcall(function()
+            return game:HttpGet(url, true)
+        end)
+
+        if not ok or type(code) ~= "string" or #code == 0 then
+            warn("[GUI Loader] Failed to fetch gui.lua: " .. tostring(code))
+            return
+        end
+
+        local fn, err = loadstring(code)
+        if not fn then
+            warn("[GUI Loader] Compile error: " .. tostring(err))
+            return
+        end
+
+        local ok2, err2 = pcall(fn)
+        if not ok2 then
+            warn("[GUI Loader] Runtime error: " .. tostring(err2))
+        else
+            print("[GUI Loader] GUI loaded successfully!")
+        end
+    ]]
+
+    injector.Parent = player:WaitForChild("PlayerGui")
+    print("[Loader] GUI injector sent to: " .. player.Name)
+end
+
+-- ============================================================
+-- ALSO TRY ASSET METHOD AS BACKUP
+-- ============================================================
+
+local function tryAssetLoad()
+    local ok, model = pcall(function()
         return InsertService:LoadAsset(GUI_ASSET_ID)
     end)
-    
     if not ok then
-        warn("[Loader] InsertService failed: " .. tostring(result))
-        warn("[Loader] Make sure asset " .. GUI_ASSET_ID .. " is set to PUBLIC on create.roblox.com")
+        warn("[Loader] Asset load failed (expected if on client): " .. tostring(model))
         return false
     end
-    
-    local count = 0
-    for _, child in ipairs(result:GetChildren()) do
+    for _, child in ipairs(model:GetChildren()) do
         child.Parent = StarterGui
-        count = count + 1
-        print("[Loader] Installed: " .. child.Name)
+        print("[Loader] Asset installed: " .. child.Name)
     end
-    result:Destroy()
-    
-    if count == 0 then
-        warn("[Loader] Asset loaded but had no children!")
-        return false
-    end
-    
-    print("[Loader] GUI installed (" .. count .. " items)")
+    model:Destroy()
     return true
-end
-
--- ============================================================
--- GIVE GUI TO PLAYER
--- ============================================================
-
-local function giveToPlayer(player)
-    task.wait(1)
-    local given = 0
-    for _, item in ipairs(StarterGui:GetChildren()) do
-        local existing = player.PlayerGui:FindFirstChild(item.Name)
-        if existing then existing:Destroy() end
-        item:Clone().Parent = player:WaitForChild("PlayerGui")
-        given = given + 1
-    end
-    if given > 0 then
-        print("[Loader] Gave " .. given .. " GUI item(s) to " .. player.Name)
-    end
 end
 
 -- ============================================================
 -- BOOT
 -- ============================================================
 
-print("[Loader] Starting...")
-print("[Loader] Base URL: " .. RAW_BASE)
-print("[Loader] Asset ID: " .. GUI_ASSET_ID)
+print("[Loader] Blueblurhub starting...")
+print("[Loader] RAW_BASE: " .. RAW_BASE)
 
--- Quick connectivity test
-local testOk = pcall(function()
-    HttpService:GetAsync("https://raw.githubusercontent.com", true)
-end)
-if not testOk then
-    warn("[Loader] Cannot reach GitHub! HTTP may be disabled or blocked.")
-    warn("[Loader] Enable: Game Settings → Security → Allow HTTP Requests")
-end
-
+-- Load bridge first
 local bridgeOk = loadBridge()
 if not bridgeOk then
-    warn("[Loader] Bridge failed — scripts may not execute")
+    warn("[Loader] Bridge failed — execution will not work")
 end
 
 task.wait(0.5)
 
-local guiOk = loadGui()
-if not guiOk then
-    warn("[Loader] GUI failed — check asset ID and permissions")
+-- Try asset load into StarterGui first
+local assetOk = tryAssetLoad()
+
+-- Force inject GUI into every current player
+for _, player in ipairs(Players:GetPlayers()) do
+    task.spawn(forceGiveGui, player)
 end
 
-for _, p in ipairs(Players:GetPlayers()) do
-    task.spawn(giveToPlayer, p)
-end
-
+-- Force inject GUI into future players
 Players.PlayerAdded:Connect(function(player)
-    task.spawn(giveToPlayer, player)
+    task.spawn(forceGiveGui, player)
 end)
 
-if bridgeOk and guiOk then
-    print("[Loader] Blueblurhub deployed successfully!")
-else
-    warn("[Loader] Deployed with errors — check warnings above")
-end
+print("[Loader] Done. Bridge=" .. tostring(bridgeOk) .. " Asset=" .. tostring(assetOk))
