@@ -1,86 +1,100 @@
 -- loader.lua
 -- loadstring(game:HttpGet("https://raw.githubusercontent.com/Shookenblook/Val-Privss/main/loader.lua"))()
 
-local HttpService   = game:GetService("HttpService")
-local InsertService = game:GetService("InsertService")
-local Players       = game:GetService("Players")
-local StarterGui    = game:GetService("StarterGui")
+local HttpService       = game:GetService("HttpService")
+local InsertService     = game:GetService("InsertService")
+local Players           = game:GetService("Players")
+local StarterGui        = game:GetService("StarterGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local BASE = "https://raw.githubusercontent.com/Shookenblook/Val-Privss/main/"
-local ASSET_ID = 78145948946458 -- your .rbxm asset ID
+local BASE     = "https://raw.githubusercontent.com/Shookenblook/Val-Privss/main/"
+local ASSET_ID = 78145948946458
 
--- Fetch a lua file from GitHub
-local function fetch(file)
-    local ok, result = pcall(function()
+-- Fetch and run a server script from GitHub
+local function runServer(file)
+    local ok, code = pcall(function()
         return HttpService:GetAsync(BASE .. file, true)
     end)
-    if not ok or type(result) ~= "string" or #result == 0 then
+    if not ok or type(code) ~= "string" then
         warn("[Loader] Failed to fetch: " .. file)
-        return nil
+        return false
     end
-    print("[Loader] Fetched: " .. file)
-    return result
-end
-
--- Run a server script from GitHub
-local function runServer(file)
-    local code = fetch(file)
-    if not code then return false end
     local fn, err = loadstring(code)
     if not fn then
-        warn("[Loader] Compile error in " .. file .. ": " .. tostring(err))
+        warn("[Loader] Compile error " .. file .. ": " .. tostring(err))
         return false
     end
-    local ok, runtimeErr = pcall(fn)
-    if not ok then
-        warn("[Loader] Runtime error in " .. file .. ": " .. tostring(runtimeErr))
+    local ok2, err2 = pcall(fn)
+    if not ok2 then
+        warn("[Loader] Runtime error " .. file .. ": " .. tostring(err2))
         return false
     end
-    print("[Loader] Server script ran: " .. file)
+    print("[Loader] Loaded: " .. file)
     return true
 end
 
--- Inject a LocalScript into a player
-local function injectLocal(player, file, name)
-    local code = fetch(file)
-    if not code then return end
-    local ls = Instance.new("LocalScript")
-    ls.Name = name or file
-    ls.Source = code
-    ls.Parent = player:WaitForChild("PlayerGui")
-    print("[Loader] Injected " .. file .. " into " .. player.Name)
+-- Load the ScreenGui rbxm from Roblox asset
+local function loadGui()
+    local ok, model = pcall(function()
+        return InsertService:LoadAsset(ASSET_ID)
+    end)
+    if not ok then
+        warn("[Loader] Asset load failed: " .. tostring(model))
+        warn("[Loader] Make sure " .. ASSET_ID .. " is PUBLIC on create.roblox.com")
+        return false
+    end
+    -- Move everything into StarterGui
+    for _, child in ipairs(model:GetChildren()) do
+        child.Parent = StarterGui
+        print("[Loader] Installed into StarterGui: " .. child.Name)
+    end
+    model:Destroy()
+    return true
 end
 
--- Give all LocalScripts to a player
+-- Give StarterGui contents to a specific player right now
 local function giveToPlayer(player)
     task.wait(0.5)
-    injectLocal(player, "gui.lua",   "BlueblurhubGUI")
-    injectLocal(player, "drag.lua",  "BlueblurhubDrag")
-    injectLocal(player, "clear.lua", "BlueblurhubClear")
-    injectLocal(player, "r6.lua",    "BlueblurhubR6")
+    for _, item in ipairs(StarterGui:GetChildren()) do
+        local existing = player.PlayerGui:FindFirstChild(item.Name)
+        if existing then existing:Destroy() end
+        item:Clone().Parent = player:WaitForChild("PlayerGui")
+    end
+    print("[Loader] GUI given to: " .. player.Name)
 end
 
 -- ============================================================
--- BOOT
+-- BOOT ORDER
 -- ============================================================
 
 print("[Loader] Starting Blueblurhub...")
 
--- 1. Run server bridge
-runServer("bridge.lua")
+-- 1. Bridge first so MangoRemote exists before GUI loads
+local bridgeOk = runServer("bridge.lua")
+if not bridgeOk then
+    warn("[Loader] Bridge failed — execution won't work")
+end
 
--- 2. Run R6 server script
-runServer("r6server.lua")
+task.wait(0.5)
 
--- 3. Give GUI to current players
+-- 2. Load the ScreenGui from your rbxm asset
+local guiOk = loadGui()
+if not guiOk then
+    warn("[Loader] GUI failed to load")
+end
+
+-- 3. Give to players already in game
 for _, player in ipairs(Players:GetPlayers()) do
     task.spawn(giveToPlayer, player)
 end
 
--- 4. Give GUI to future players
+-- 4. Give to future players
 Players.PlayerAdded:Connect(function(player)
     task.spawn(giveToPlayer, player)
 end)
 
-print("[Loader] Done.")
+if bridgeOk and guiOk then
+    print("[Loader] Blueblurhub fully deployed!")
+else
+    warn("[Loader] Deployed with errors — check warnings above")
+end
